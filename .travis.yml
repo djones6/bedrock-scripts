@@ -1,0 +1,22 @@
+os: linux
+dist: xenial
+services:
+  - docker
+
+script:
+  - apt-get update && apt-get install screen unzip
+  - docker build -t minecraft .
+  - mkdir $HOME/bedrock
+  - ./minecraft upgrade
+  - ./minecraft start
+  - ./minecraft say Test Message
+  - ./minecraft stop
+  - grep 'Server started' $HOME/bedrock/server/Dedicated_Server.txt
+  - ./minecraft backup
+  - echo "Broken everything" > $HOME/bedrock/server/server.properties
+  - echo "Blank" > $HOME/bedrock/server/Dedicated_Server.txt
+  - ./minecraft restore `ls -1 $HOME/bedrock/backups/ | tail -1`
+  - ./minecraft start
+  - ./minecraft stop
+  - grep 'Server started' $HOME/bedrock/server/Dedicated_Server.txt
+
