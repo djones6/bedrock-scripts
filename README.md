@@ -7,7 +7,8 @@ They have only been tested in one environment (mine) so use caution. I did a qui
 
 ### Initial set-up
 
-- Install Docker, if not already installed
+- Install Docker and Screen, if not already installed:
+  - `sudoo apt-get install docker.io screen`
 - Edit `Dockerfile`, replacing the UID and GID to match your local user. This is necessary because we're going to bind mount the server directory into the container.
 - Build the image to run the server:
 ```
