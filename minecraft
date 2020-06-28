@@ -108,6 +108,42 @@ function do_status() {
   SERVER_STATUS=`docker container inspect minecraft_server --format='{{.State.Running}}'`
 }
 
+# Downloads the latest server zip from minecraft.net.
+# Sets $SERVER_ZIP to the name of the zipfile downloaded.
+function do_download_latest() {
+  # Extract latest server URL from site
+  local SERVER_URL=`curl -L https://minecraft.net/en-us/download/server/bedrock/ | grep bin-linux |sed -e 's/.*<a href=\"\(https:.*\/bin-linux\/.*\.zip\).*/\1/'`
+  if [ -z "$SERVER_URL" ]; then
+    echo "Could not get URL for download"
+    return 1
+  fi
+  echo "Server download URL: $SERVER_URL"
+  SERVER_ZIP=`echo $SERVER_URL | rev | cut -d'/' -f1 | rev`
+
+  # Download latest server
+  cd $MC_BASE
+  curl -LO $SERVER_URL
+  if [ $? -ne 0 ]; then
+    echo "Failed download"
+    return 1
+  fi
+  if [ ! -f "$MC_BASE/$SERVER_ZIP" ]; then
+    echo "Error - $SERVER_ZIP doesn't seem to exist"
+    return 1
+  fi
+}
+
+# Unpacks the latest server zip. Any existing files will be overwritten.
+function do_unpack_latest() {
+  # Unpack new server
+  cd $MC_FS && unzip -o $MC_BASE/$SERVER_ZIP
+  UNZIP_RC=$?
+  if [ $UNZIP_RC -ne 0 ]; then
+    echo "Warning - unzip failed ($UNZIP_RC)"
+  fi
+  return $UNZIP_RC
+}
+
 function do_help() {
   echo "Usage: minecraft (start | stop | status | backup | restore | say | connect | upgrade)"
   echo "  start, stop: start or stop the container"
@@ -153,6 +189,14 @@ status)
 connect)
   screen -r ${SCREEN_NAME}
   ;;
+create)
+  if [ -d "$MC_FS" ]; then
+    echo "Error - $MC_FS already exists. Use 'upgrade' instead?"
+    exit 1
+  fi
+  mkdir -p $MC_FS
+  do_download_latest && do_unpack_latest && echo "Done. Start the server with minecraft start"
+  ;;
 upgrade)
   do_status
   if [ $? -ne 0 ]; then
@@ -160,24 +204,9 @@ upgrade)
     exit 1
   fi
 
-  # Extract latest server URL from site
-  SERVER_URL=`curl -L https://minecraft.net/en-us/download/server/bedrock/ | grep bin-linux |sed -e 's/.*<a href=\"\(https:.*\/bin-linux\/.*\.zip\).*/\1/'`
-  if [ -z "$SERVER_URL" ]; then
-    echo "Could not get URL for download"
-    exit 1
-  fi
-  echo "Server download URL: $SERVER_URL"
-  SERVER_ZIP=`echo $SERVER_URL | rev | cut -d'/' -f1 | rev`
-
-  # Download latest server
-  cd $MC_BASE
-  curl -LO $SERVER_URL
+  do_download_latest
   if [ $? -ne 0 ]; then
-    echo "Failed download"
-    exit 1
-  fi
-  if [ ! -f "$MC_BASE/$SERVER_ZIP" ]; then
-    echo "Error - $SERVER_ZIP doesn't seem to exist"
+    echo "Failed to download - aborting"
     exit 1
   fi
 
@@ -211,12 +240,7 @@ upgrade)
     fi
   fi
 
-  # Unpack new server
-  cd $MC_FS && unzip -o $MC_BASE/$SERVER_ZIP
-  UNZIP_RC=$?
-  if [ $UNZIP_RC -ne 0 ]; then
-    echo "Warning - unzip failed ($UNZIP_RC)"
-  fi
+  do_unpack_latest
 
   # Restore the backup
   if [ $MC_FS_EXISTS -eq 1 ]; then
