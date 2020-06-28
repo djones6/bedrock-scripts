@@ -2,12 +2,13 @@ os: linux
 dist: xenial
 services:
   - docker
+sudo: required
 
 script:
-  - apt-get update && apt-get install screen unzip
+  - sudo apt-get update && sudo apt-get install screen unzip
   - docker build -t minecraft .
   - mkdir $HOME/bedrock
-  - ./minecraft upgrade
+  - ./minecraft create
   - ./minecraft start
   - ./minecraft say Test Message
   - ./minecraft stop
