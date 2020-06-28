@@ -1,11 +1,13 @@
 os: linux
 dist: xenial
+language: minimal
 services:
   - docker
-sudo: required
+
+before_install:
+  - sudo apt-get install screen unzip
 
 script:
-  - sudo apt-get update && sudo apt-get install screen unzip
   - docker build -t minecraft .
   - mkdir $HOME/bedrock
   - ./minecraft create
