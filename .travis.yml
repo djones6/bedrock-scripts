@@ -11,6 +11,7 @@ script:
   - docker build -t minecraft .
   - mkdir $HOME/bedrock
   - ./minecraft create
+  - script /dev/null
   - ./minecraft start
   - ./minecraft say Test Message
   - ./minecraft stop
