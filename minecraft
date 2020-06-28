@@ -1,0 +1,226 @@
+#!/bin/bash
+
+# Name of Docker container used to run the server
+CONTAINER_NAME="minecraft_server"
+# Server port (to expose)
+SERVER_PORT=19132
+# Name of Docker image to run
+IMAGE_NAME="minecraft"
+# Name of Screen session to run server in
+SCREEN_NAME="minecraft"
+# Base location of Bedrock Server
+MC_BASE="/home/minecraft/official"
+# Subdirectory containing the server (usually 'server')
+MC_FS="${MC_BASE}/server"
+
+# Name of your Minecraft world (must match directory name under 'worlds')
+MC_WORLD="Home level one"
+# Timestamp to use for backups
+TSTAMP="`date +"%Y%m%d.%H%M%S"`"
+# Name of backup file
+MC_BKP="Home_level_one-$TSTAMP"
+# Base location for backups
+MC_BKP_BASE="${MC_BASE}/backups"
+# Backup directory
+MC_BKP_DIR="${MC_BKP_BASE}/$TSTAMP"
+
+# Configuration files to be backed up (in addition to the world files)
+BKP_FILES="whitelist.json server.properties permissions.json valid_known_packs.json"
+
+# Send a command to a named screen session
+function scr_cmd() {
+  screen -S $SCREEN_NAME -p 0 -X stuff "$1\r"
+}
+
+# Backup a specific configuration file to $MC_BKP_DIR
+# $1 = filename
+function mc_bkp() {
+  cp $MC_FS/$1 $MC_BKP_DIR/$1
+}
+
+# Restore a specific configuration file from a backup location
+# $1 = backup directory
+# $2 = filename
+function mc_restore() {
+  cp $1/$2 $MC_FS/$2
+}
+
+# Create a backup, including a tar.gz of the world, and individual configuration files
+# Precondition: the server should be stopped.
+function do_backup() {
+  mkdir -p $MC_BKP_DIR
+  cd $MC_FS/worlds && tar -czf ${MC_BKP_DIR}/${MC_BKP}.tar.gz "$MC_WORLD"
+  for bfile in $BKP_FILES; do
+    mc_bkp "$bfile"
+  done
+}
+
+# Restore a backup.
+# Precondition: the server should be stopped.
+# TODO: restore the world (for now, you can manually extract from the tar.gz)
+# $1 = name of the backup (eg. a $TSTAMP)
+function do_restore() {
+  echo "TODO: restoring world not done yet, only config for now"
+  do_restore_cfg $1
+}
+
+# Restore the configuration files from a backup.
+# Precondition: the server should be stopped.
+# $1 = name of the backup (eg. a $TSTAMP)
+function do_restore_cfg() {
+  RESTORE_NAME="$1"
+  if [ -z "$RESTORE_NAME" ]; then
+    echo "Error - specify backup date to restore:"
+    ls -ltr "$MC_BKP_BASE" | tail -3
+    return 1
+  fi
+  RESTORE_DIR="$MC_BKP_BASE/$RESTORE_NAME"
+  if [ ! -d "$RESTORE_DIR" ]; then
+    echo "$RESTORE_NAME not found"
+    return 2
+  fi
+  for bfile in $BKP_FILES; do
+    mc_restore "$RESTORE_DIR" "$bfile"
+  done
+}
+
+# Start the server in a Docker container, within a named screen session.
+function do_start() {
+  docker container rm $CONTAINER_NAME
+  screen -dmS $SCREEN_NAME docker run -it -p ${SERVER_PORT}:${SERVER_PORT} -p ${SERVER_PORT}:${SERVER_PORT}/udp -v ${MC_FS}:/minecraft --name $CONTAINER_NAME $IMAGE_NAME
+}
+
+# Stop the server, and wait for the container to terminate.
+function do_stop() {
+  scr_cmd "stop"
+  echo "Waiting for container $CONTAINER_NAME to stop"
+  docker container wait $CONTAINER_NAME
+  DOCKER_RC=$?
+  if [ $DOCKER_RC -ne 0 ]; then
+    echo "Stop was not clean! ($DOCKER_RC)"
+  fi
+  return $DOCKER_RC
+}
+
+# Check the status of the docker container, setting $SERVER_STATUS to either
+# 'true' (if server is running) or 'false' (if stopped).
+function do_status() {
+  SERVER_STATUS=`docker container inspect minecraft_server --format='{{.State.Running}}'`
+}
+
+function do_help() {
+  echo "Usage: minecraft (start | stop | status | backup | restore | say | connect | upgrade)"
+  echo "  start, stop: start or stop the container"
+  echo "  status: determine whether the server is currently running"
+  echo "  backup, restore: backup or restore the server + configuration files"
+  echo "  say <message>: send a message via the server console"
+  echo "  connect: connect to the screen session to access the server console"
+  echo "  upgrade: upgrade the server to the latest version (stops the server if running)"
+}
+
+# Entrypoint - handle user command
+case $1 in
+say)
+  shift
+  scr_cmd "say $*"
+  ;;
+stop)
+  do_stop
+  exit $?
+  ;;
+backup)
+  do_backup
+  exit $?
+  ;;
+restore)
+  do_restore "$2"
+  exit $?
+  ;; 
+start)
+  do_start
+  START_RC=$?
+  if [ $START_RC -ne 0 ]; then
+    echo "Start failed ($START_RC)"
+  fi
+  exit $START_RC
+  ;;
+status)
+  do_status
+  if [ $? -eq 0 ]; then
+    echo "Server running: $SERVER_STATUS"
+  fi
+  ;;
+connect)
+  screen -r ${SCREEN_NAME}
+  ;;
+upgrade)
+  do_status
+  if [ $? -ne 0 ]; then
+    echo "Failed to get status - aborting"
+    exit 1
+  fi
+
+  # Extract latest server URL from site
+  SERVER_URL=`curl -L https://minecraft.net/en-us/download/server/bedrock/ | grep bin-linux |sed -e 's/.*<a href=\"\(https:.*\/bin-linux\/.*\.zip\).*/\1/'`
+  if [ -z "$SERVER_URL" ]; then
+    echo "Could not get URL for download"
+    exit 1
+  fi
+  echo "Server download URL: $SERVER_URL"
+  SERVER_ZIP=`echo $SERVER_URL | rev | cut -d'/' -f1 | rev`
+
+  # Download latest server
+  cd $MC_BASE
+  curl -LO $SERVER_URL
+  if [ $? -ne 0 ]; then
+    echo "Failed download"
+    exit 1
+  fi
+  if [ ! -f "$MC_BASE/$SERVER_ZIP" ]; then
+    echo "Error - $SERVER_ZIP doesn't seem to exist"
+    exit 1
+  fi
+
+  # Upgrade server - stop if running
+  echo "Upgrading server with $SERVER_ZIP"
+  if [ $SERVER_STATUS == "true" ]; then
+    echo "Stopping server first"
+    do_stop
+    if [ $? -ne 0 ]; then
+      echo "Stop failed - aborting"
+      exit 1
+    fi
+  fi
+
+  # Create a backup
+  echo "Creating backup $TSTAMP"
+  do_backup
+  if [ $? -ne 0 ]; then
+    echo "Backup failed - aborting"
+    exit 1
+  fi
+
+  # Unpack new server
+  cd $MC_FS && unzip -o $MC_BASE/$SERVER_ZIP
+  UNZIP_RC=$?
+  if [ $UNZIP_RC -ne 0 ]; then
+    echo "Warning - unzip failed ($UNZIP_RC)"
+  fi
+
+  # Restore the backup
+  echo "Restoring config"
+  do_restore_cfg "$TSTAMP"
+  if [ $? -ne 0 ]; then
+    echo "Warning - restore failed"
+  fi
+  echo "You can start the server now."
+  ;;
+help)
+  do_help
+  ;;
+*)
+  echo "Unknown command $1"
+  do_help
+  ;;
+esac
+
