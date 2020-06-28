@@ -9,16 +9,16 @@ IMAGE_NAME="minecraft"
 # Name of Screen session to run server in
 SCREEN_NAME="minecraft"
 # Base location of Bedrock Server
-MC_BASE="/home/minecraft/official"
+MC_BASE="$HOME/bedrock"
 # Subdirectory containing the server (usually 'server')
 MC_FS="${MC_BASE}/server"
 
 # Name of your Minecraft world (must match directory name under 'worlds')
-MC_WORLD="Home level one"
+MC_WORLD="Bedrock level"
 # Timestamp to use for backups
 TSTAMP="`date +"%Y%m%d.%H%M%S"`"
 # Name of backup file
-MC_BKP="Home_level_one-$TSTAMP"
+MC_BKP="World-$TSTAMP"
 # Base location for backups
 MC_BKP_BASE="${MC_BASE}/backups"
 # Backup directory
@@ -193,11 +193,22 @@ upgrade)
   fi
 
   # Create a backup
-  echo "Creating backup $TSTAMP"
-  do_backup
-  if [ $? -ne 0 ]; then
-    echo "Backup failed - aborting"
-    exit 1
+  if [ -d "$MC_FS" ]; then
+    MC_FS_EXISTS=1
+    echo "Creating backup $TSTAMP"
+    do_backup
+    if [ $? -ne 0 ]; then
+      echo "Backup failed - aborting"
+      exit 1
+    fi
+  else
+    MC_FS_EXISTS=0
+    echo "Warning - no existing server detected - this will create a new server."
+    mkdir $MC_FS
+    if [ $? -ne 0 ]; then
+      echo "Failed to create server directory at $MC_FS"
+      exit 1
+    fi
   fi
 
   # Unpack new server
@@ -208,12 +219,16 @@ upgrade)
   fi
 
   # Restore the backup
-  echo "Restoring config"
-  do_restore_cfg "$TSTAMP"
-  if [ $? -ne 0 ]; then
-    echo "Warning - restore failed"
+  if [ $MC_FS_EXISTS -eq 1 ]; then
+    echo "Restoring config"
+    do_restore_cfg "$TSTAMP"
+    if [ $? -ne 0 ]; then
+      echo "Warning - restore failed"
+    fi
+    echo "You can start the server now."
+  else
+    echo "New server - no configuration to restore."
   fi
-  echo "You can start the server now."
   ;;
 help)
   do_help
